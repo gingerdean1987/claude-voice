@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Voice Assistant</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        #status {
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: center;
+            font-size: 24px;
+            background: #2a2a2a;
+        }
+        .listening {
+            background: #ff4444 !important;
+            animation: pulse 1.5s infinite;
+        }
+        .processing {
+            background: #ffaa00 !important;
+        }
+        .ready {
+            background: #44ff44 !important;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        #transcript {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            min-height: 100px;
+            margin: 20px 0;
+            white-space: pre-wrap;
+        }
+        #response {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            min-height: 100px;
+            margin: 20px 0;
+            white-space: pre-wrap;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+            background: #4CAF50;
+            color: white;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>Claude Voice Assistant</h1>
+    <div id="status">Say "Hey Claude" or "Claude" to start</div>
+    <div id="transcript"></div>
+    <div id="response"></div>
+    
+    <button id="startBtn">Start Listening</button>
+    <button id="stopBtn" disabled>Stop</button>
+
+    <script>
+        const API_KEY = 'skant-api03-KeVQgLGETG5qjwLf300REM19RzpudTqfXuTE55l7DaAL1AmHbPXdgZXY1K06LYNRc2FPZyRcpsArYcfwha-PCQ-OX19nwAA';
+        
+        const statusEl = document.getElementById('status');
+        const transcriptEl = document.getElementById('transcript');
+        const responseEl = document.getElementById('response');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        
+        let recognition;
+        let isListeningForWakeWord = false;
+        let isRecording = false;
+        let fullTranscript = '';
+        let synth = window.speechSynthesis;
+        
+        // Check browser support
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            alert('Speech recognition not supported in this browser. Use Chrome or Edge.');
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        
+        function updateStatus(message, className) {
+            statusEl.textContent = message;
+            statusEl.className = className;
+        }
+        
+        function startListening() {
+            isListeningForWakeWord = true;
+            isRecording = false;
+            fullTranscript = '';
+            transcriptEl.textContent = '';
+            responseEl.textContent = '';
+            
+            try {
+                recognition.start();
+                updateStatus('Say "Hey Claude" or "Claude" to start', 'ready');
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+            } catch (e) {
+                console.error('Recognition start error:', e);
+            }
+        }
+        
+        function stopListening() {
+            recognition.stop();
+            isListeningForWakeWord = false;
+            isRecording = false;
+            updateStatus('Stopped', '');
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+        
+        async function sendToClaude(text) {
+            updateStatus('Thinking...', 'processing');
+            
+            try {
+                const response = await fetch('https://api.anthropic.com/v1/messages', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': API_KEY,
+                        'anthropic-version': '2023-06-01'
+                    },
+                    body: JSON.stringify({
+                        model: 'claude-sonnet-4-20250514',
+                        max_tokens: 1024,
+                        messages: [{
+                            role: 'user',
+                            content: text
+                        }]
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const claudeResponse = data.content[0].text;
+                
+                responseEl.textContent = claudeResponse;
+                updateStatus('Speaking...', 'processing');
+                
+                // Speak the response
+                const utterance = new SpeechSynthesisUtterance(claudeResponse);
+                utterance.onend = () => {
+                    updateStatus('Say "Hey Claude" or "Claude" to start', 'ready');
+                    isListeningForWakeWord = true;
+                    fullTranscript = '';
+                    transcriptEl.textContent = '';
+                };
+                synth.speak(utterance);
+                
+            } catch (error) {
+                console.error('Error:', error);
+                responseEl.textContent = 'Error: ' + error.message;
+                updateStatus('Error - Say "Hey Claude" to try again', 'ready');
+                isListeningForWakeWord = true;
+            }
+        }
+        
+        recognition.onresult = (event) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript;
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            
+            const currentText = (finalTranscript + interimTranscript).toLowerCase().trim();
+            
+            // Check for wake word
+            if (isListeningForWakeWord && !isRecording) {
+                if (currentText.includes('hey claude') || currentText.includes('claude')) {
+                    isListeningForWakeWord = false;
+                    isRecording = true;
+                    fullTranscript = '';
+                    updateStatus('Listening... (say "stop" or "over" when done)', 'listening');
+                    transcriptEl.textContent = '';
+                }
+            }
+            
+            // Recording user's message
+            else if (isRecording) {
+                if (finalTranscript) {
+                    fullTranscript += finalTranscript + ' ';
+                }
+                
+                transcriptEl.textContent = fullTranscript + interimTranscript;
+                
+                // Check for stop words
+                if (currentText.includes('stop') || currentText.includes('over')) {
+                    isRecording = false;
+                    isListeningForWakeWord = false;
+                    
+                    // Remove the stop word from transcript
+                    let cleanTranscript = fullTranscript
+                        .replace(/\bstop\b/gi, '')
+                        .replace(/\bover\b/gi, '')
+                        .trim();
+                    
+                    if (cleanTranscript) {
+                        transcriptEl.textContent = cleanTranscript;
+                        sendToClaude(cleanTranscript);
+                    } else {
+                        updateStatus('No message detected - Say "Hey Claude" to try again', 'ready');
+                        isListeningForWakeWord = true;
+                    }
+                }
+            }
+        };
+        
+        recognition.onerror = (event) => {
+            console.error('Recognition error:', event.error);
+            if (event.error === 'no-speech') {
+                // Restart automatically on no-speech
+                if (isListeningForWakeWord || isRecording) {
+                    recognition.stop();
+                    setTimeout(() => {
+                        try {
+                            recognition.start();
+                        } catch (e) {
+                            console.error('Restart error:', e);
+                        }
+                    }, 100);
+                }
+            }
+        };
+        
+        recognition.onend = () => {
+            // Auto-restart if we're still supposed to be listening
+            if (isListeningForWakeWord || isRecording) {
+                try {
+                    recognition.start();
+                } catch (e) {
+                    console.error('Auto-restart error:', e);
+                }
+            }
+        };
+        
+        startBtn.addEventListener('click', startListening);
+        stopBtn.addEventListener('click', stopListening);
+        
+        // Auto-start on page load
+        window.addEventListener('load', () => {
+            setTimeout(startListening, 500);
+        });
+    </script>
+</body>
+</html>
